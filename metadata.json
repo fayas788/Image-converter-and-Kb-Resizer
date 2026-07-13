@@ -1,0 +1,6 @@
+{
+  "name": "Image Converter & KB Compressor",
+  "description": "An educational and professional image converter, resizer, and compressor tool. Scale, format, and compress your photos to any custom KB target size with real-time interactive previews and image optimization insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
