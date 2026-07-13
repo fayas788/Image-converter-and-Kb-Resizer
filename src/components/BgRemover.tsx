@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Eraser, RotateCcw, Download, MousePointer2, Settings2, CheckCircle2 } from 'lucide-react';
+import { removeBackground } from '@imgly/background-removal';
+import { Sparkles, Eraser, RotateCcw, Download, MousePointer2, Settings2, CheckCircle2 } from 'lucide-react';
 import { formatBytes } from '../utils/compressor';
 
 interface BgRemoverProps {
@@ -22,8 +23,10 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultSize, setResultSize] = useState<number>(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAutoRemoving, setIsAutoRemoving] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [erasedCount, setErasedCount] = useState(0);
+  const [addShadow, setAddShadow] = useState(false);
 
   // Refs for logic
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -75,24 +78,49 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
       bgA = 255;
     }
 
+    // Prepare cutout image data (always transparent background initially to allow drop shadow)
     for (let i = 0; i < mask.length; i++) {
       const dataIdx = i * 4;
       const m = mask[i]; // 255 or 0
       
       if (m === 0) { // erased
-        outData.data[dataIdx] = bgR;
-        outData.data[dataIdx+1] = bgG;
-        outData.data[dataIdx+2] = bgB;
-        outData.data[dataIdx+3] = bgA;
+        outData.data[dataIdx] = 0;
+        outData.data[dataIdx+1] = 0;
+        outData.data[dataIdx+2] = 0;
+        outData.data[dataIdx+3] = 0; // completely transparent
       } else {
         outData.data[dataIdx] = orig.data[dataIdx];
         outData.data[dataIdx+1] = orig.data[dataIdx+1];
         outData.data[dataIdx+2] = orig.data[dataIdx+2];
-        outData.data[dataIdx+3] = orig.data[dataIdx+3];
+        outData.data[dataIdx+3] = orig.data[dataIdx+3]; // keep original alpha
       }
     }
     
-    ctx.putImageData(outData, 0, 0);
+    // Draw background color first
+    if (bgColor !== 'transparent') {
+      ctx.fillStyle = `rgba(${bgR}, ${bgG}, ${bgB}, ${bgA / 255})`;
+      ctx.fillRect(0, 0, width, height);
+    } else {
+      ctx.clearRect(0, 0, width, height);
+    }
+    
+    // Draw the cutout (with or without shadow)
+    const tempCvs = document.createElement('canvas');
+    tempCvs.width = width;
+    tempCvs.height = height;
+    const tempCtx = tempCvs.getContext('2d')!;
+    tempCtx.putImageData(outData, 0, 0);
+
+    ctx.save();
+    if (addShadow) {
+      // Simulate a natural drop shadow
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+      ctx.shadowBlur = 20;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 10;
+    }
+    ctx.drawImage(tempCvs, 0, 0);
+    ctx.restore();
     
     // Generate blob url for download / preview
     cvs.toBlob((blob) => {
@@ -106,7 +134,7 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
         if (onBgRemovedUrl) onBgRemovedUrl(url);
       }
     }, 'image/png');
-  }, [bgColor, customColor, onBgRemovedUrl]);
+  }, [bgColor, customColor, addShadow, onBgRemovedUrl]);
 
   // Initial render when loaded
   useEffect(() => {
@@ -214,6 +242,59 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
     }, 10);
   };
 
+  const handleAutoRemove = async () => {
+    if (!originalDataRef.current || !maskRef.current || !canvasRef.current) return;
+    
+    setIsAutoRemoving(true);
+    try {
+      // Use imgly to get blob
+      const blob = await removeBackground(imageUrl);
+      
+      // We need to apply this blob to our mask
+      const img = new Image();
+      const objUrl = URL.createObjectURL(blob);
+      
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => {
+          const cvs = document.createElement('canvas');
+          const width = originalDataRef.current!.width;
+          const height = originalDataRef.current!.height;
+          cvs.width = width;
+          cvs.height = height;
+          const ctx = cvs.getContext('2d')!;
+          ctx.drawImage(img, 0, 0, width, height); // draw cutout scaled to original bounds
+          
+          const cutoutData = ctx.getImageData(0, 0, width, height).data;
+          
+          // Update mask based on alpha channel of cutout
+          let changes = 0;
+          for (let i = 0; i < maskRef.current!.length; i++) {
+            const alpha = cutoutData[i * 4 + 3];
+            if (alpha < 128) {
+              if (maskRef.current![i] !== 0) changes++;
+              maskRef.current![i] = 0; // erase
+            } else {
+              maskRef.current![i] = 255; // keep
+            }
+          }
+          
+          if (changes > 0) setErasedCount(c => c + 1); // just to trigger UI update indicating edits
+          renderResult();
+          resolve();
+        };
+        img.onerror = reject;
+        img.src = objUrl;
+      });
+      
+      URL.revokeObjectURL(objUrl);
+    } catch (error) {
+      console.error('Failed to auto remove background:', error);
+      alert('Failed to auto remove background. Check console for details.');
+    } finally {
+      setIsAutoRemoving(false);
+    }
+  };
+
   const handleReset = () => {
     if (maskRef.current) {
       maskRef.current.fill(255);
@@ -292,6 +373,52 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
 
         {/* RIGHT COLUMN: Controls */}
         <div className="space-y-6">
+
+          {/* Auto Remove AI */}
+          <div className="space-y-4 bg-teal-50 p-4 rounded-xl border border-teal-200">
+            <h4 className="text-xs font-bold text-teal-700 uppercase tracking-wider flex items-center gap-1.5 mb-2">
+              <Sparkles className="h-4 w-4" />
+              AI Auto-Removal
+            </h4>
+            
+            <button
+              onClick={handleAutoRemove}
+              disabled={isAutoRemoving}
+              className={`w-full py-2.5 px-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                isAutoRemoving 
+                  ? 'bg-teal-200 text-teal-600 cursor-wait'
+                  : 'bg-teal-600 hover:bg-teal-700 text-white shadow-md shadow-teal-100 cursor-pointer'
+              }`}
+            >
+              {isAutoRemoving ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-teal-600 border-t-transparent rounded-full animate-spin"></div>
+                  Processing AI...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  Auto Remove Background
+                </>
+              )}
+            </button>
+
+            <label className="flex items-center gap-2 cursor-pointer mt-3">
+              <input 
+                type="checkbox" 
+                checked={addShadow}
+                onChange={(e) => {
+                  setAddShadow(e.target.checked);
+                  // Render immediately without waiting since it's just shadow processing
+                }}
+                className="w-4 h-4 text-teal-600 rounded border-teal-300 focus:ring-teal-500"
+              />
+              <span className="text-sm font-bold text-teal-800">Keep / Add Synthetic Shadow</span>
+            </label>
+            <p className="text-xs text-teal-600/80 leading-relaxed pl-6">
+              Applies a natural drop shadow to replace original shadows removed by the AI.
+            </p>
+          </div>
           
           {/* Eraser Settings */}
           <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
