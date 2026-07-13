@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Eraser, RotateCcw, Download, MousePointer2, Settings2 } from 'lucide-react';
+import { Eraser, RotateCcw, Download, MousePointer2, Settings2, CheckCircle2 } from 'lucide-react';
 import { formatBytes } from '../utils/compressor';
 
 interface BgRemoverProps {
@@ -7,11 +7,12 @@ interface BgRemoverProps {
   imageName: string;
   originalSize: number;
   onBgRemovedUrl?: (url: string) => void;
+  onApply?: (url: string, size: number) => void;
 }
 
 type BgColor = 'transparent' | 'white' | 'black' | 'custom';
 
-export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemovedUrl }: BgRemoverProps) {
+export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemovedUrl, onApply }: BgRemoverProps) {
   // UI States
   const [tolerance, setTolerance] = useState(30);
   const [isContiguous, setIsContiguous] = useState(true);
@@ -418,14 +419,31 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
               <button
                 onClick={handleDownload}
                 disabled={!resultUrl}
+                className={`flex items-center justify-center gap-2 py-3 px-4 font-bold text-sm rounded-xl transition-all flex-1 ${
+                  resultUrl
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 cursor-pointer'
+                    : 'bg-slate-50 text-slate-400 border-slate-100 cursor-not-allowed'
+                }`}
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </button>
+              
+              <button
+                onClick={() => {
+                  if (resultUrl && onApply) {
+                    onApply(resultUrl, resultSize);
+                  }
+                }}
+                disabled={!resultUrl}
                 className={`flex items-center justify-center gap-2 py-3 px-4 font-bold text-sm rounded-xl transition-all flex-[2] ${
                   resultUrl
                     ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-100 cursor-pointer'
                     : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                 }`}
               >
-                <Download className="h-4 w-4" />
-                Download PNG
+                <CheckCircle2 className="h-4 w-4" />
+                Apply Changes
               </button>
             </div>
           </div>

@@ -199,24 +199,107 @@ export default function App() {
   }, [compressSingleImage]);
 
   /**
-   * Handle save cropped area
+   * Handle save cropped area by permanently applying it to the original image
    */
-  const handleSaveCrop = (crop: CropArea | undefined) => {
+  const handleSaveCrop = async (crop: CropArea | undefined) => {
     setIsCropping(false);
     if (!activeId) return;
+
+    if (!crop) {
+      // Just clear crop
+      setQueue((prev) => {
+        const updated = prev.map((img) => (img.id === activeId ? { ...img, crop: undefined } : img));
+        compressSingleImage(activeId, updated);
+        return updated;
+      });
+      return;
+    }
+
+    const targetImg = queue.find((img) => img.id === activeId);
+    if (!targetImg) return;
+
+    try {
+      const imgElement = await loadImage(targetImg.originalUrl);
+      const cvs = document.createElement('canvas');
+      cvs.width = crop.width;
+      cvs.height = crop.height;
+      const ctx = cvs.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(imgElement, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+        cvs.toBlob((blob) => {
+          if (blob) {
+            const newUrl = URL.createObjectURL(blob);
+            const newSize = blob.size;
+            const newDimensions = {
+              width: crop.width,
+              height: crop.height,
+              aspectRatio: crop.width / crop.height,
+            };
+
+            setQueue((prev) => {
+              const updated = prev.map((img) => {
+                if (img.id === activeId) {
+                  return {
+                    ...img,
+                    originalUrl: newUrl,
+                    originalSize: newSize,
+                    originalDimensions: newDimensions,
+                    crop: undefined, // permanently applied
+                    settings: {
+                      ...img.settings,
+                      customWidth: newDimensions.width,
+                      customHeight: newDimensions.height,
+                    },
+                  };
+                }
+                return img;
+              });
+
+              // Re-trigger compression immediately
+              compressSingleImage(activeId, updated);
+              return updated;
+            });
+          }
+        }, targetImg.file?.type || targetImg.settings.format || 'image/jpeg', 1.0);
+      }
+    } catch (err) {
+      console.error('Failed to apply crop permanently', err);
+    }
+  };
+
+  /**
+   * Handle apply background remover changes
+   */
+  const handleApplyBgRemover = useCallback(async (newUrl: string, newSize: number) => {
+    setIsBgRemoving(false);
+    if (!activeId) return;
+
+    // Load image to get new dimensions
+    let dimensions: ImageDimensions = { width: 800, height: 600, aspectRatio: 1.33 };
+    try {
+      const img = await loadImage(newUrl);
+      dimensions = {
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        aspectRatio: img.naturalWidth / img.naturalHeight,
+      };
+    } catch (err) {
+      console.warn('Failed to load dimensions for image after BG removal', err);
+    }
 
     setQueue((prev) => {
       const updated = prev.map((img) => {
         if (img.id === activeId) {
-          const cropW = crop ? crop.width : img.originalDimensions.width;
-          const cropH = crop ? crop.height : img.originalDimensions.height;
           return {
             ...img,
-            crop,
+            originalUrl: newUrl,
+            originalSize: newSize,
+            originalDimensions: dimensions,
+            crop: undefined, // Reset crop if any existed before bg remove
             settings: {
               ...img.settings,
-              customWidth: cropW,
-              customHeight: cropH,
+              customWidth: dimensions.width,
+              customHeight: dimensions.height,
             }
           };
         }
@@ -227,7 +310,7 @@ export default function App() {
       compressSingleImage(activeId, updated);
       return updated;
     });
-  };
+  }, [activeId, compressSingleImage]);
 
   /**
    * Update settings specifically for the active image, and re-trigger compression.
@@ -504,6 +587,7 @@ export default function App() {
                         imageUrl={activeImage.originalUrl}
                         imageName={activeImage.name}
                         originalSize={activeImage.originalSize}
+                        onApply={(newUrl, newSize) => handleApplyBgRemover(newUrl, newSize)}
                       />
                     ) : (
                       <SplitPreview
