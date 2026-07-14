@@ -28,7 +28,7 @@ import CropEditor from './components/CropEditor';
 import BgRemover from './components/BgRemover';
 
 import { ImageFile, CompressionSettings, ImageDimensions, CropArea } from './types';
-import { loadImage, solveCompression, formatBytes } from './utils/compressor';
+import { loadImage, solveCompression, formatBytes, applySharpening } from './utils/compressor';
 
 // Initialize default settings for newly uploaded images
 const INITIAL_DEFAULT_SETTINGS: CompressionSettings = {
@@ -42,6 +42,9 @@ const INITIAL_DEFAULT_SETTINGS: CompressionSettings = {
   useTargetSize: true, // target custom KB by default
   quality: 0.8, // default manual quality
 };
+
+// Removed applySharpening from here, moved to compressor.ts
+
 
 export default function App() {
   const [queue, setQueue] = useState<ImageFile[]>([]);
@@ -201,7 +204,7 @@ export default function App() {
   /**
    * Handle save cropped area by permanently applying it to the original image
    */
-  const handleSaveCrop = async (crop: CropArea | undefined) => {
+  const handleSaveCrop = async (crop: CropArea | undefined, applyEnhancement: boolean = false) => {
     setIsCropping(false);
     if (!activeId) return;
 
@@ -225,7 +228,15 @@ export default function App() {
       cvs.height = crop.height;
       const ctx = cvs.getContext('2d');
       if (ctx) {
+        if (applyEnhancement) {
+          ctx.filter = 'contrast(1.15) brightness(1.05) saturate(1.15)';
+        }
         ctx.drawImage(imgElement, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+        
+        // Apply pixel-level sharpening matrix for blurry photos
+        if (applyEnhancement) {
+          applySharpening(ctx, crop.width, crop.height);
+        }
         cvs.toBlob((blob) => {
           if (blob) {
             const newUrl = URL.createObjectURL(blob);

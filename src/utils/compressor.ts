@@ -19,7 +19,8 @@ export function drawImageToCanvas(
   img: HTMLImageElement,
   targetWidth: number,
   targetHeight: number,
-  crop?: CropArea
+  crop?: CropArea,
+  format?: ImageFormat
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = targetWidth;
@@ -32,6 +33,12 @@ export function drawImageToCanvas(
   // Configure high-quality image smoothing
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
+
+  // Fill with white background by default for formats that don't support transparency
+  if (format !== 'image/png') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, targetWidth, targetHeight);
+  }
 
   if (crop) {
     ctx.drawImage(
@@ -118,7 +125,7 @@ export async function solveCompression(
 
   // Case A: Manual quality compression (no target KB selected)
   if (!settings.useTargetSize) {
-    const canvas = drawImageToCanvas(img, baseWidth, baseHeight, crop);
+    const canvas = drawImageToCanvas(img, baseWidth, baseHeight, crop, settings.format);
     const q = settings.format === 'image/png' ? undefined : settings.quality;
     const blob = await getCanvasBlob(canvas, settings.format, q);
     return {
@@ -139,7 +146,7 @@ export async function solveCompression(
   for (let scaleAttempt = 0; scaleAttempt < maxScaleAttempts; scaleAttempt++) {
     const w = Math.max(1, Math.round(baseWidth * currentScale));
     const h = Math.max(1, Math.round(baseHeight * currentScale));
-    const canvas = drawImageToCanvas(img, w, h, crop);
+    const canvas = drawImageToCanvas(img, w, h, crop, settings.format);
 
     // PNG is a lossless format; canvas.toBlob does not support the quality parameter.
     // If users target a specific KB for PNG, the only way to compress is dimension reduction.
@@ -212,7 +219,7 @@ export async function solveCompression(
   // Extreme fallback if everything else fails
   const finalW = Math.max(1, Math.round(baseWidth * 0.05));
   const finalH = Math.max(1, Math.round(baseHeight * 0.05));
-  const canvas = drawImageToCanvas(img, finalW, finalH, crop);
+  const canvas = drawImageToCanvas(img, finalW, finalH, crop, settings.format);
   const blob = await getCanvasBlob(canvas, settings.format, 0.01);
   return {
     blob,
@@ -235,3 +242,55 @@ export function formatBytes(bytes: number, decimals: number = 1): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
+
+/**
+ * Helper function to apply a sharpening convolution matrix to a canvas
+ * Skips fully transparent pixels to prevent dark halos on cutouts.
+ */
+export const applySharpening = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  
+  // 3x3 Sharpening kernel
+  const weights = [
+     0, -1,  0,
+    -1,  5, -1,
+     0, -1,  0
+  ];
+  
+  // Create a copy of the data to read from
+  const copy = new Uint8ClampedArray(data);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dstOff = (y * width + x) * 4;
+      if (copy[dstOff + 3] === 0) continue; // Skip fully transparent pixels
+      
+      let r = 0, g = 0, b = 0;
+      
+      for (let cy = 0; cy < 3; cy++) {
+        for (let cx = 0; cx < 3; cx++) {
+          const scy = y + cy - 1;
+          const scx = x + cx - 1;
+          
+          if (scy >= 0 && scy < height && scx >= 0 && scx < width) {
+            const srcOff = (scy * width + scx) * 4;
+            const wt = weights[cy * 3 + cx];
+            const hasAlpha = copy[srcOff + 3] > 0;
+            
+            // If neighboring pixel is transparent, fall back to current pixel's color to avoid dark blending
+            r += (hasAlpha ? copy[srcOff] : copy[dstOff]) * wt;
+            g += (hasAlpha ? copy[srcOff + 1] : copy[dstOff + 1]) * wt;
+            b += (hasAlpha ? copy[srcOff + 2] : copy[dstOff + 2]) * wt;
+          }
+        }
+      }
+      
+      data[dstOff] = r;
+      data[dstOff + 1] = g;
+      data[dstOff + 2] = b;
+    }
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+};

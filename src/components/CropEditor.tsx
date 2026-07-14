@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CropArea } from '../types';
-import { Crop, Check, X, RefreshCw, Maximize2 } from 'lucide-react';
+import { Crop, Check, X, RefreshCw, Maximize2, Wand2 } from 'lucide-react';
 
 interface CropEditorProps {
   imageUrl: string;
   originalWidth: number;
   originalHeight: number;
   initialCrop?: CropArea;
-  onSave: (crop: CropArea | undefined) => void;
+  onSave: (crop: CropArea | undefined, applyEnhancement?: boolean) => void;
   onCancel: () => void;
 }
 
@@ -243,6 +243,86 @@ export default function CropEditor({
     setCrop({ x: 0, y: 0, width: originalWidth, height: originalHeight });
   };
 
+  const handleAutoEnhanceCrop = () => {
+    setActivePreset('free');
+    if (!imageRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = originalWidth;
+    canvas.height = originalHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.drawImage(imageRef.current, 0, 0);
+    const imgData = ctx.getImageData(0, 0, originalWidth, originalHeight);
+    const data = imgData.data;
+    
+    const bgR = data[0];
+    const bgG = data[1];
+    const bgB = data[2];
+    
+    const threshold = 25; 
+    const isBg = (r: number, g: number, b: number) => {
+        return Math.abs(r - bgR) < threshold && Math.abs(g - bgG) < threshold && Math.abs(b - bgB) < threshold;
+    };
+    
+    let top = 0, bottom = originalHeight, left = 0, right = originalWidth;
+    
+    outTop: for (let y = 0; y < originalHeight; y++) {
+        for (let x = 0; x < originalWidth; x++) {
+            const i = (y * originalWidth + x) * 4;
+            if (!isBg(data[i], data[i+1], data[i+2])) {
+                top = y;
+                break outTop;
+            }
+        }
+    }
+    outBottom: for (let y = originalHeight - 1; y >= 0; y--) {
+        for (let x = 0; x < originalWidth; x++) {
+            const i = (y * originalWidth + x) * 4;
+            if (!isBg(data[i], data[i+1], data[i+2])) {
+                bottom = y;
+                break outBottom;
+            }
+        }
+    }
+    outLeft: for (let x = 0; x < originalWidth; x++) {
+        for (let y = 0; y < originalHeight; y++) {
+            const i = (y * originalWidth + x) * 4;
+            if (!isBg(data[i], data[i+1], data[i+2])) {
+                left = x;
+                break outLeft;
+            }
+        }
+    }
+    outRight: for (let x = originalWidth - 1; x >= 0; x--) {
+        for (let y = 0; y < originalHeight; y++) {
+            const i = (y * originalWidth + x) * 4;
+            if (!isBg(data[i], data[i+1], data[i+2])) {
+                right = x;
+                break outRight;
+            }
+        }
+    }
+    
+    if (right <= left || bottom <= top) {
+        left = Math.floor(originalWidth * 0.05);
+        right = Math.floor(originalWidth * 0.95);
+        top = Math.floor(originalHeight * 0.05);
+        bottom = Math.floor(originalHeight * 0.95);
+    } else {
+        const pad = 15;
+        left = Math.max(0, left - pad);
+        top = Math.max(0, top - pad);
+        right = Math.min(originalWidth, right + pad);
+        bottom = Math.min(originalHeight, bottom + pad);
+    }
+    
+    const w = right - left;
+    const h = bottom - top;
+    
+    onSave({ x: left, y: top, width: w, height: h }, true);
+  };
+
   return (
     <div className="bg-slate-900 text-white rounded-2xl shadow-xl overflow-hidden border border-slate-800 flex flex-col md:flex-row h-[550px] md:h-[600px]">
       
@@ -416,6 +496,13 @@ export default function CropEditor({
 
         {/* Buttons Action Group */}
         <div className="space-y-2 mt-5 md:mt-0">
+          <button
+            onClick={handleAutoEnhanceCrop}
+            className="w-full py-2.5 px-3 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-violet-900/50 transition-all mb-2"
+          >
+            <Wand2 className="h-4 w-4" />
+            Auto Crop & Enhance
+          </button>
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleFullImage}

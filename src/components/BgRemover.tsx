@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { removeBackground } from '@imgly/background-removal';
-import { Sparkles, Eraser, RotateCcw, Download, MousePointer2, Settings2, CheckCircle2 } from 'lucide-react';
-import { formatBytes } from '../utils/compressor';
+import { Sparkles, Eraser, RotateCcw, Download, MousePointer2, Settings2, CheckCircle2, Wand2 } from 'lucide-react';
+import { formatBytes, applySharpening } from '../utils/compressor';
 
 interface BgRemoverProps {
   imageUrl: string;
@@ -17,7 +17,7 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
   // UI States
   const [tolerance, setTolerance] = useState(30);
   const [isContiguous, setIsContiguous] = useState(true);
-  const [bgColor, setBgColor] = useState<BgColor>('transparent');
+  const [bgColor, setBgColor] = useState<BgColor>('white');
   const [customColor, setCustomColor] = useState('#ffffff');
   
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -27,6 +27,7 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
   const [isLoaded, setIsLoaded] = useState(false);
   const [erasedCount, setErasedCount] = useState(0);
   const [addShadow, setAddShadow] = useState(false);
+  const [applyEnhancement, setApplyEnhancement] = useState(false);
 
   // Refs for logic
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -112,6 +113,12 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
     tempCtx.putImageData(outData, 0, 0);
 
     ctx.save();
+    
+    // 1) Apply brightness/contrast enhancement natively via canvas filter
+    if (applyEnhancement) {
+      ctx.filter = 'contrast(1.15) brightness(1.05) saturate(1.15)';
+    }
+
     if (addShadow) {
       // Simulate a natural drop shadow
       ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
@@ -121,6 +128,11 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
     }
     ctx.drawImage(tempCvs, 0, 0);
     ctx.restore();
+    
+    // 2) Apply pixel-level sharpening matrix (skips transparent background)
+    if (applyEnhancement) {
+      applySharpening(ctx, width, height);
+    }
     
     // Generate blob url for download / preview
     cvs.toBlob((blob) => {
@@ -134,7 +146,7 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
         if (onBgRemovedUrl) onBgRemovedUrl(url);
       }
     }, 'image/png');
-  }, [bgColor, customColor, addShadow, onBgRemovedUrl]);
+  }, [bgColor, customColor, addShadow, applyEnhancement, onBgRemovedUrl]);
 
   // Initial render when loaded
   useEffect(() => {
@@ -248,7 +260,7 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
     setIsAutoRemoving(true);
     try {
       // Use imgly to get blob
-      const blob = await removeBackground(imageUrl);
+      const blob = await removeBackground(imageUrl, { model: 'small' });
       
       // We need to apply this blob to our mask
       const img = new Image();
@@ -417,6 +429,22 @@ export default function BgRemover({ imageUrl, imageName, originalSize, onBgRemov
             </label>
             <p className="text-xs text-teal-600/80 leading-relaxed pl-6">
               Applies a natural drop shadow to replace original shadows removed by the AI.
+            </p>
+            
+            <label className="flex items-center gap-2 cursor-pointer mt-3">
+              <input 
+                type="checkbox" 
+                checked={applyEnhancement}
+                onChange={(e) => setApplyEnhancement(e.target.checked)}
+                className="w-4 h-4 text-violet-600 rounded border-violet-300 focus:ring-violet-500"
+              />
+              <span className="text-sm font-bold text-violet-800 flex items-center gap-1.5">
+                <Wand2 className="h-3.5 w-3.5" />
+                Auto Enhance (Unblur & Brighten)
+              </span>
+            </label>
+            <p className="text-xs text-teal-600/80 leading-relaxed pl-6">
+              Sharpen blurry edges, increase brightness, and make the subject pop.
             </p>
           </div>
           
